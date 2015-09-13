@@ -23,10 +23,10 @@ import (
 	"cgt.name/pkg/go-mwclient/params"
 	"encoding/csv"
 	"flag"
-	"fmt"
 	"github.com/jmcvetta/napping"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -101,35 +101,34 @@ type categoryInfo struct {
  * Command line arguments
  */
 
-// The flag package provides a default help printer via -h switch
-var versionFlag *bool = flag.Bool("v", false, "Print the version number.")
-
-var csvLocation *string = flag.String("f", "", "CSV file location.")
-
-var templateLocation *string = flag.String("t", "", "Template file location.")
-
-var wikiApiUrl *string = flag.String("w", "", "Wiki API URL.")
-
-var pageTitle *string = flag.String("p", "", "Page title.")
-
-var sectionNumber *string = flag.String("s", "", "Section number.")
+var csvLocation string
+var templateLocation string
+var wikiApiUrl string
+var pageTitle string
+var sectionNumber string
 
 var commons, wiki *mwclient.Client
 
 func check(e error) {
 	if e != nil {
-		panic(e)
+		log.Fatal(e)
 	}
 }
 
+func initFlags() *flag.FlagSet {
+	set := flag.NewFlagSet("collections", flag.ExitOnError)
+	set.StringVar(&csvLocation, "f", "", "CSV file location.")
+	set.StringVar(&templateLocation, "t", "", "Template file location.")
+	set.StringVar(&wikiApiUrl, "w", "", "Wiki API URL.")
+	set.StringVar(&pageTitle, "p", "", "Page title.")
+	set.StringVar(&sectionNumber, "s", "", "Section number.")
+	
+	return set
+}
+
 func main() {
-	flag.Parse() // Scan the arguments list
-
-	if *versionFlag {
-		fmt.Println("Version:", APP_VERSION)
-	}
-
-	c := make(chan int)
+	flags := initFlags()
+	check(flags.Parse(os.Args[1:]))
 
 	// Anonymous connection to Commons
 	var commonsErr error
@@ -138,27 +137,31 @@ func main() {
 
 	// Authentified connection to the target wiki
 	var wikiErr error
-	wiki, wikiErr = mwclient.New(*wikiApiUrl, APP_VERSION)
+	wiki, wikiErr = mwclient.New(wikiApiUrl, APP_VERSION)
 	check(wikiErr)
 
 	login := os.Getenv("BOT_LOGIN")
 	password := os.Getenv("BOT_PASSWORD")
 
+	log.Printf("Will connect to %s with account %s\n", wikiApiUrl, login)
+
 	err := wiki.Login(login, password)
 	check(err)
 
-	// Open items channel
+	// Open specimens channel
 	specimens := make(chan specimen)
-	defer close(specimens)
 
-	// Get ready for items
-	go queryWdq(specimens, c)
-
-	// Read items
+	// Read specimens
 	go readCsvFile(specimens)
+
+	// Receive specimens
+	c := make(chan int)
+	go queryWdq(specimens, c)
 
 	// Wait
 	<-c
+
+	log.Println("All done, logging out")
 
 	// Say goodbye
 	wiki.Logout()
@@ -166,9 +169,13 @@ func main() {
 
 // Read main CSV file and build incomplete items from it
 func readCsvFile(specimens chan specimen) {
-	f, err := os.Open(*csvLocation)
+	
+	log.Printf("Opening catalog file %s\n", csvLocation)
+	
+	f, err := os.Open(csvLocation)
 	check(err)
 	defer f.Close()
+	defer close(specimens)
 
 	br := bufio.NewReader(f)
 
@@ -193,6 +200,8 @@ func readCsvFile(specimens chan specimen) {
 
 		specimens <- specimen
 	}
+	
+	log.Println("Done reading catalog")
 }
 
 /*
@@ -224,6 +233,7 @@ func queryWdq(specimens chan specimen, c chan int) {
 	result := wdqResult{}
 
 	// Query WDQ
+	log.Printf("Querying WDQ with params %s\n", &query)
 	resp, err := napping.Get(WDQ_API_URL, &query, &result, nil)
 	check(err)
 
@@ -231,6 +241,8 @@ func queryWdq(specimens chan specimen, c chan int) {
 		if result.Status.Error != "OK" {
 			panic(result.Status.Error)
 		}
+
+		log.Println("Handling answer from WDQ")
 
 		// We build an array of all Commons category names, then slice it up in multiple Commons queries.
 		var categoryNames []string
@@ -305,6 +317,8 @@ func queryWdq(specimens chan specimen, c chan int) {
 func queryCommons(categoryMembers map[string]categoryInfo, categoryNames []string, c chan int) {
 	defer close(c)
 
+	log.Printf("Querying Commons for %d categories\n", len(categoryNames))
+
 	parameters := params.Values{
 		"action":        "query",
 		"prop":          "categoryinfo",
@@ -350,6 +364,9 @@ func queryCommons(categoryMembers map[string]categoryInfo, categoryNames []strin
  * Count files in one's category subcategories.
  */
 func queryCommonsSubcats(categoryName string) int {
+	
+	log.Printf("Querying Commons for subcategories of %s\n", categoryName)
+
 	parameters := params.Values{
 		"action":        "query",
 		"prop":          "categoryinfo",
@@ -384,8 +401,10 @@ func queryCommonsSubcats(categoryName string) int {
  */
 func updateWikiPage(specimens chan specimen, c chan int) {
 	defer close(c)
+	
+	log.Printf("About to update page %s", pageTitle)
 
-	templateBytes, err := ioutil.ReadFile(*templateLocation)
+	templateBytes, err := ioutil.ReadFile(templateLocation)
 	check(err)
 
 	tableTemplate, err := template.New("table").Delims("¤{", "}¤").Parse(string(templateBytes))
@@ -396,8 +415,8 @@ func updateWikiPage(specimens chan specimen, c chan int) {
 	tableTemplate.Execute(&buf, specimens)
 
 	parameters := params.Values{
-		"title":    *pageTitle,
-		"section":  *sectionNumber,
+		"title":    pageTitle,
+		"section":  sectionNumber,
 		"text":     buf.String(),
 		"summary":  "Mise à jour",
 		"notminor": "",
