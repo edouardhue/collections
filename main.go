@@ -141,8 +141,8 @@ func main() {
 	wiki, wikiErr = mwclient.New(*wikiApiUrl, APP_VERSION)
 	check(wikiErr)
 
-	login := os.Getenv("PROSPERO_LOGIN")
-	password := os.Getenv("PROSPERO_PASSWORD")
+	login := os.Getenv("BOT_LOGIN")
+	password := os.Getenv("BOT_PASSWORD")
 
 	err := wiki.Login(login, password)
 	check(err)
