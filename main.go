@@ -28,6 +28,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -396,12 +397,24 @@ func queryCommonsSubcats(categoryName string) int {
 	return totalFiles
 }
 
+type byOriginalName []specimen
+
+func (a byOriginalName) Len() int { return len(a) }
+func (a byOriginalName) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a byOriginalName) Less(i, j int) bool { return a[i].OriginalName < a[j].OriginalName }
+
 /*
  * Generate a page section by merging the specimens in the provided template.
  */
 func updateWikiPage(specimens chan specimen, c chan int) {
 	defer close(c)
-	
+
+	var specimensBuffer []specimen
+	for specimen := range specimens {
+		specimensBuffer = append(specimensBuffer, specimen)
+	}
+	sort.Sort(byOriginalName(specimensBuffer))	
+
 	log.Printf("About to update page %s", pageTitle)
 
 	templateBytes, err := ioutil.ReadFile(templateLocation)
@@ -412,7 +425,7 @@ func updateWikiPage(specimens chan specimen, c chan int) {
 
 	var buf bytes.Buffer
 
-	tableTemplate.Execute(&buf, specimens)
+	tableTemplate.Execute(&buf, specimensBuffer)
 
 	parameters := params.Values{
 		"title":    pageTitle,
