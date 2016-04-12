@@ -136,7 +136,7 @@ func main() {
 	commons, commonsErr = mwclient.New(COMMONS_API_URL, APP_VERSION)
 	check(commonsErr)
 
-	// Authentified connection to the target wiki
+	// Authenticated connection to the target wiki
 	var wikiErr error
 	wiki, wikiErr = mwclient.New(wikiApiUrl, APP_VERSION)
 	check(wikiErr)
